@@ -1,14 +1,14 @@
 ## importing
-from importlib.resources import path
 from itertools import combinations
 import os
 import argparse
 import mmh3
-from numpy import full_like ## python wrapper of MurmurHash3 (https://pypi.org/project/mmh3/); tried this one as it was mentinoed in the instructions + stuck with this one since it's much faster.
+import numpy as np ## python wrapper of MurmurHash3 (https://pypi.org/project/mmh3/); tried this one as it was mentinoed in the instructions + stuck with this one since it's much faster.
 import pandas as pd
 import Bio.SeqIO as sio
 from skbio import DistanceMatrix
 from skbio.tree import nj
+import matplotlib.pyplot as plt
 #from simhash import Simhash ## simhash had the intuitive feature of generating similar hashes for similar inputs, but proved quie slow hashing large lists.
 
 ## argparse
@@ -21,6 +21,7 @@ parser.add_argument("-k", "--kmer_size", type=int, help="Length of kmer to gener
 parser.add_argument("-s", "--sketch_size", type=int, nargs='?', const=1, default=1000, help="Number of hashes to include in sketch. Defaults to 1000. Requires -m/--minhash.")
 parser.add_argument("-c", "--cyclic", type=bool, nargs='?', const=1, default=False, help="Is the input cyclic? Defaults to False. Always set to False for files with multiple records.")
 parser.add_argument("-t", "--make_tree", type=bool, nargs='?', const=1, default=False, help="Make a neighbour-joining tree from distances? Defaults to False.")
+parser.add_argument("-v", "--var_sketchsize", type=bool, nargs='?', const=1, default=False, help="Plot full distance vs minhash distances with varying sketch sizes. Plots full distances and minhash distances with sketch sizes from 1000 to 1000000 with 10x intervals.")
 args = parser.parse_args()
 
 ## get args
@@ -32,13 +33,17 @@ kmer_size = args.kmer_size
 sketch_size = args.sketch_size
 cyclic = args.cyclic
 make_tree = args.make_tree
+var_sketchsize = args.var_sketchsize
 
+## exception handling
 ## raise exception if fasta_dir provided with fasta_1 or fasta_2
 if fasta_dir and (fasta_1 or fasta_2):
     raise Exception("\n\n>>> Please provide EITHER a directory containing fasta files OR exactly two fasta files!\n\n")
+
 ## raise exception if only one fasta file provided
 if (fasta_1 and not fasta_2) or (fasta_2 and not fasta_1):
     raise Exception("\n\n>>> Please provide exactly two fasta files!\n\n")
+
 ## raise warning if -m/--make_tree and exactly two fasta files given
 fasta_exts = (".fa", ".fasta", ".faa", ".fna")
 if fasta_dir:
@@ -46,13 +51,17 @@ if fasta_dir:
     for fasta_file in os.listdir(fasta_dir):
         if fasta_file.endswith(fasta_exts):
             counter += 1
-print(f"{counter} fasta files found.\n")
-if counter <= 2:
-    print("\nNJ tree requires more three or more input files, 2 found; tree will not be made...\n")
-    make_tree = False
+    print(f"{counter} fasta files found.\n")
+    if counter <= 2:
+        print("\nNJ tree requires more three or more input files, 2 found; tree will not be made...\n")
+        make_tree = False
+
+## varying sketchsize for comparing with full distances currently does not work with directory input
+if fasta_dir and var_sketchsize:
+    raise Exception("\n\n>>>Varying sketch sizes to compare minhash distances to full distances is currently only compatible when exactly two fasta files are specified with -f1/--fasta_1 and -f2/--fasta_2.")
 
 ## checkpoint -- checking valid arguments
-print(f"Do hashing? {minhash}, \nFasta Dir: {fasta_dir}, \nFile 1: {fasta_1}, \nFile 2: {fasta_2}, \nK-mer length: {kmer_size}, \nSketch size: {sketch_size}, \nCyclic? {cyclic}, \nMake an NJ tree? {make_tree} \n\n")
+print(f"Do hashing?: {minhash} \nFasta Dir: {fasta_dir} \nFile 1: {fasta_1} \nFile 2: {fasta_2} \nK-mer length: {kmer_size} \nSketch size: {sketch_size} \nCyclic?: {cyclic} \nMake an NJ tree?: {make_tree}\n Comparing distances at varying sketch sizes?: {var_sketchsize} \n\n")
 
 ## generate kmers from sequence
 def get_kmers(seq, k, cyclic:False):
@@ -147,20 +156,43 @@ def read_folder_and_generate_kmers(some_dir, minhash):
 
 
 if not fasta_dir: ## if two fasta files given as input
-    kmers_file1 = read_fasta_and_generate_kmers(fasta_1)
-    kmers_file2 = read_fasta_and_generate_kmers(fasta_2)
+    if not var_sketchsize:
+        kmers_file1 = read_fasta_and_generate_kmers(fasta_1)
+        kmers_file2 = read_fasta_and_generate_kmers(fasta_2)
 
-    jacc_index_nohash = get_jaccard_index(kmers_file1, kmers_file2)
-    print(f"Jaccard index for sequences in the given files is: {jacc_index_nohash}")
-    print(f"Jaccard distance for sequences in the given files is: {(1-jacc_index_nohash)}\n\n")
-    if minhash:
-        hashes_file1 = sorted([mmh3.hash(kmer) for kmer in kmers_file1])
-        hashes_file2 = sorted([mmh3.hash(kmer) for kmer in kmers_file2])
-        sketch_file1 = hashes_file1[0:sketch_size]
-        sketch_file2 = hashes_file2[0:sketch_size]
-        jacc_index_withhash = get_jaccard_index(sketch_file1, sketch_file2)
-        print(f"Jaccard index after hashing+sketching for sequences in the given files is: {jacc_index_withhash}")
-        print(f"Jaccard distance after hashing+sketching for sequences in the given files is: {(1-jacc_index_withhash)} \n\n")
+        jacc_index_nohash = get_jaccard_index(kmers_file1, kmers_file2)
+        print(f"Jaccard index for sequences in the given files is: {jacc_index_nohash}")
+        print(f"Jaccard distance for sequences in the given files is: {(1-jacc_index_nohash)}\n\n")
+        if minhash:
+            hashes_file1 = sorted([mmh3.hash(kmer) for kmer in kmers_file1])
+            hashes_file2 = sorted([mmh3.hash(kmer) for kmer in kmers_file2])
+            sketch_file1 = hashes_file1[0:sketch_size]
+            sketch_file2 = hashes_file2[0:sketch_size]
+            jacc_index_withhash = get_jaccard_index(sketch_file1, sketch_file2)
+            print(f"Jaccard index after hashing+sketching for sequences in the given files is: {jacc_index_withhash}")
+            print(f"Jaccard distance after hashing+sketching for sequences in the given files is: {(1-jacc_index_withhash)} \n\n")
+    else:
+        sketch_size_list = [1000, 10000, 100000, 1000000]
+        kmer_list_1 = read_fasta_and_generate_kmers(fasta_1)
+        kmer_list_2 = read_fasta_and_generate_kmers(fasta_2)
+        full_dist = 1-get_jaccard_index(kmer_list_1, kmer_list_2)
+        if len(kmer_list_1) > len(kmer_list_2):
+            sketch_size_list.append(len(kmer_list_1))
+        else:
+            sketch_size_list.append(len(kmer_list_2))
+        distances = []
+        hash_list_1 = [mmh3.hash(kmer) for kmer in kmer_list_1]
+        hash_list_2 = [mmh3.hash(kmer) for kmer in kmer_list_2]
+        for size in sketch_size_list:
+            distances.append(1-(get_jaccard_index(hash_list_1[0:size], hash_list_2[0:size])))
+
+        plt.plot(sketch_size_list, distances, "-o")
+        plt.axhline(y = full_dist, color = "r", linestyle = '--')
+        plt.xlabel("Sketch Size", color = "k")
+        plt.ylabel("Simple Jaccard Distance", color = "k")
+        plt.text(x = 1000, y = full_dist+0.0005, s = "Full Distance")
+        plt.show()
+
 else: ## if user chooses to provide a directory containing two or more fasta files
     print("Processing a directory...\n")
     file_kmers_dict = read_folder_and_generate_kmers(fasta_dir, minhash)
