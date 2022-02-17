@@ -47,6 +47,7 @@ python3 ./kmer_distances.py -d <path/to/fasta/dir/> -k kmer-size -m -t True
 - mmh3 (hash function)  
 - Bio.SeqIO (to work with fasta files)  
 
+### TODO
 - [x] Steps 1 through 5  
 - [x] Output sketches to file  
 - [x] A plot to represent that minhash distances with progressively larger sketch sizes converge with full distances  
