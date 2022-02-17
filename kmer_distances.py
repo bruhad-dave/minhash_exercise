@@ -58,10 +58,10 @@ if fasta_dir:
 
 ## varying sketchsize for comparing with full distances currently does not work with directory input
 if fasta_dir and var_sketchsize:
-    raise Exception("\n\n>>>Varying sketch sizes to compare minhash distances to full distances is currently only compatible when exactly two fasta files are specified with -f1/--fasta_1 and -f2/--fasta_2.")
+    raise Exception("\n\n>>>Varying sketch sizes to compare minhash distances to full distances is currently only compatible when exactly two fasta files are specified with -f1/--fasta_1 and -f2/--fasta_2.\n\n")
 
 ## checkpoint -- checking valid arguments
-print(f"Do hashing?: {minhash} \nFasta Dir: {fasta_dir} \nFile 1: {fasta_1} \nFile 2: {fasta_2} \nK-mer length: {kmer_size} \nSketch size: {sketch_size} \nCyclic?: {cyclic} \nMake an NJ tree?: {make_tree}\n Comparing distances at varying sketch sizes?: {var_sketchsize} \n\n")
+print(f"Do hashing?: {minhash} \nFasta Dir: {fasta_dir} \nFile 1: {fasta_1} \nFile 2: {fasta_2} \nK-mer length: {kmer_size} \nSketch size: {sketch_size} \nCyclic?: {cyclic} \nMake an NJ tree?: {make_tree} \nComparing distances at varying sketch sizes?: {var_sketchsize} \n\n")
 
 ## generate kmers from sequence
 def get_kmers(seq, k, cyclic:False):
@@ -149,7 +149,7 @@ def read_folder_and_generate_kmers(some_dir, minhash):
         ## if minhash is set to true, also create hash list and sketch for each set of kmers.
         if minhash:
             for key, values in file_dict.items():
-                file_dict[key].append(sorted([mmh3.hash(kmer) for kmer in values[0]]))
+                file_dict[key].append(sorted([mmh3.hash(kmer, signed = False) for kmer in values[0]]))
             for key, values in file_dict.items():
                 file_dict[key].append(sorted(values[1])[0:sketch_size])
     return file_dict
@@ -164,10 +164,16 @@ if not fasta_dir: ## if two fasta files given as input
         print(f"Jaccard index for sequences in the given files is: {jacc_index_nohash}")
         print(f"Jaccard distance for sequences in the given files is: {(1-jacc_index_nohash)}\n\n")
         if minhash:
-            hashes_file1 = sorted([mmh3.hash(kmer) for kmer in kmers_file1])
-            hashes_file2 = sorted([mmh3.hash(kmer) for kmer in kmers_file2])
+            hashes_file1 = sorted([mmh3.hash(kmer, signed = False) for kmer in kmers_file1])
+            hashes_file2 = sorted([mmh3.hash(kmer, signed = False) for kmer in kmers_file2])
             sketch_file1 = hashes_file1[0:sketch_size]
             sketch_file2 = hashes_file2[0:sketch_size]
+            ## code to output the above to file
+            sample1 = fasta_1.split("/")[-1]
+            sample2 = fasta_2.split("/")[-1]
+            with open (f"./sketches_{sample1}_{sample2}.txt", "w") as outfile:
+                outfile.write(f"{sample1}:{str(sketch_file1)}\n{sample2}:{str(sketch_file2)}")
+            outfile.close()
             jacc_index_withhash = get_jaccard_index(sketch_file1, sketch_file2)
             print(f"Jaccard index after hashing+sketching for sequences in the given files is: {jacc_index_withhash}")
             print(f"Jaccard distance after hashing+sketching for sequences in the given files is: {(1-jacc_index_withhash)} \n\n")
@@ -181,8 +187,8 @@ if not fasta_dir: ## if two fasta files given as input
         else:
             sketch_size_list.append(len(kmer_list_2))
         distances = []
-        hash_list_1 = [mmh3.hash(kmer) for kmer in kmer_list_1]
-        hash_list_2 = [mmh3.hash(kmer) for kmer in kmer_list_2]
+        hash_list_1 = [mmh3.hash(kmer, signed = False) for kmer in kmer_list_1]
+        hash_list_2 = [mmh3.hash(kmer, signed = False) for kmer in kmer_list_2]
         for size in sketch_size_list:
             distances.append(1-(get_jaccard_index(hash_list_1[0:size], hash_list_2[0:size])))
 
