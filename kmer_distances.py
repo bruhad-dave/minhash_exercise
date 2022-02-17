@@ -3,20 +3,24 @@ from importlib.resources import path
 from itertools import combinations
 import os
 import argparse
-import mmh3 ## python wrapper of MurmurHash3 (https://pypi.org/project/mmh3/); tried this one as it was mentinoed in the instructions + stuck with this one since it's much faster.
+import mmh3
+from numpy import full_like ## python wrapper of MurmurHash3 (https://pypi.org/project/mmh3/); tried this one as it was mentinoed in the instructions + stuck with this one since it's much faster.
 import pandas as pd
 import Bio.SeqIO as sio
+from skbio import DistanceMatrix
+from skbio.tree import nj
 #from simhash import Simhash ## simhash had the intuitive feature of generating similar hashes for similar inputs, but proved quie slow hashing large lists.
 
 ## argparse
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser("A script to calculate simple jaccard distance between given fasta inputs.")
 parser.add_argument("-m", "--minhash", action="store_true", help="First of two fasta files to process.")
-parser.add_argument("-d", "--fasta_dir", type=str, help="A directory containing fasta files to process.")
+parser.add_argument("-d", "--fasta_dir", type=str, help="A directory containing THREE OR MORE fasta files to process.")
 parser.add_argument("-f1", "--fasta_1", type=str, help="First of two fasta files to process. Incompatible with -d/--fasta_dir.")
 parser.add_argument("-f2", "--fasta_2", type=str, help="Second of two fasta files to process. Incompatible with -d/--fasta_dir.")
 parser.add_argument("-k", "--kmer_size", type=int, help="Length of kmer to generate. Requires -m/--minhash.")
 parser.add_argument("-s", "--sketch_size", type=int, nargs='?', const=1, default=1000, help="Number of hashes to include in sketch. Defaults to 1000. Requires -m/--minhash.")
-parser.add_argument("-c", "--cyclic", type=bool, nargs='?', const=1, default=False, help="Is the input cyclic? Defaults to False. If file contains multiple fasta records, this will be set to False for that file.")
+parser.add_argument("-c", "--cyclic", type=bool, nargs='?', const=1, default=False, help="Is the input cyclic? Defaults to False. Always set to False for files with multiple records.")
+parser.add_argument("-t", "--make_tree", type=bool, nargs='?', const=1, default=False, help="Make a neighbour-joining tree from distances? Defaults to False.")
 args = parser.parse_args()
 
 ## get args
@@ -27,6 +31,7 @@ fasta_2 = args.fasta_2
 kmer_size = args.kmer_size
 sketch_size = args.sketch_size
 cyclic = args.cyclic
+make_tree = args.make_tree
 
 ## raise exception if fasta_dir provided with fasta_1 or fasta_2
 if fasta_dir and (fasta_1 or fasta_2):
@@ -34,9 +39,20 @@ if fasta_dir and (fasta_1 or fasta_2):
 ## raise exception if only one fasta file provided
 if (fasta_1 and not fasta_2) or (fasta_2 and not fasta_1):
     raise Exception("\n\n>>> Please provide exactly two fasta files!\n\n")
+## raise warning if -m/--make_tree and exactly two fasta files given
+fasta_exts = (".fa", ".fasta", ".faa", ".fna")
+if fasta_dir:
+    counter = 0
+    for fasta_file in os.listdir(fasta_dir):
+        if fasta_file.endswith(fasta_exts):
+            counter += 1
+print(f"{counter} fasta files found.\n")
+if counter <= 2:
+    print("\nNJ tree requires more three or more input files, 2 found; tree will not be made...\n")
+    make_tree = False
 
 ## checkpoint -- checking valid arguments
-print(f"Do hashing? {minhash}, \nFasta Dir: {fasta_dir}, \nFile 1: {fasta_1}, \nFile 2: {fasta_2}, \nK-mer length: {kmer_size}, \nSketch size: {sketch_size}, \nCyclic? {cyclic}")
+print(f"Do hashing? {minhash}, \nFasta Dir: {fasta_dir}, \nFile 1: {fasta_1}, \nFile 2: {fasta_2}, \nK-mer length: {kmer_size}, \nSketch size: {sketch_size}, \nCyclic? {cyclic}, \nMake an NJ tree? {make_tree} \n\n")
 
 ## generate kmers from sequence
 def get_kmers(seq, k, cyclic:False):
@@ -112,7 +128,7 @@ def read_fasta_and_generate_kmers(file):
             print("Working with sequence of length ", len(record.seq), "in file ", file, "with cyclic = ", cyclic) ## checkpoint -- should give single length value per file
             kmer_dict = get_kmers(str(record.seq), kmer_size, cyclic)
             kmer_list = [str(kmer) for kmer in list(kmer_dict.keys())]
-    print(f"#kmers in {file} = {len(kmer_list)}") ## checkpoint -- should be a number around 2,000,000 for these samples
+    print(f"#kmers in {file} = {len(kmer_list)} \n\n") ## checkpoint -- should be a number around 2,000,000 for these samples
     return kmer_list
 
 def read_folder_and_generate_kmers(some_dir, minhash):
@@ -135,25 +151,61 @@ if not fasta_dir: ## if two fasta files given as input
     kmers_file2 = read_fasta_and_generate_kmers(fasta_2)
 
     jacc_index_nohash = get_jaccard_index(kmers_file1, kmers_file2)
-    print("Jaccard index for sequences in the given files is: ", jacc_index_nohash)
-    print("Jaccard distance for sequences in the given files is: ", (1-jacc_index_nohash))
+    print(f"Jaccard index for sequences in the given files is: {jacc_index_nohash}")
+    print(f"Jaccard distance for sequences in the given files is: {(1-jacc_index_nohash)}\n\n")
     if minhash:
         hashes_file1 = sorted([mmh3.hash(kmer) for kmer in kmers_file1])
         hashes_file2 = sorted([mmh3.hash(kmer) for kmer in kmers_file2])
         sketch_file1 = hashes_file1[0:sketch_size]
         sketch_file2 = hashes_file2[0:sketch_size]
         jacc_index_withhash = get_jaccard_index(sketch_file1, sketch_file2)
-        print("Jaccard index after hashing+sketching for sequences in the given files is: ", jacc_index_withhash)
-        print("Jaccard distance after hashing+sketching for sequences in the given files is: ", (1-jacc_index_withhash))
+        print(f"Jaccard index after hashing+sketching for sequences in the given files is: {jacc_index_withhash}")
+        print(f"Jaccard distance after hashing+sketching for sequences in the given files is: {(1-jacc_index_withhash)} \n\n")
 else: ## if user chooses to provide a directory containing two or more fasta files
-    print("Processing a directory...")
+    print("Processing a directory...\n")
     file_kmers_dict = read_folder_and_generate_kmers(fasta_dir, minhash)
 
     sample_list = list(file_kmers_dict.keys())
     pairs = list(combinations([sample for sample in sample_list], 2))
-
+    full_dist_df = pd.DataFrame(index=sample_list, columns=sample_list)
+    for i in sample_list:
+        full_dist_df.at[i, i] = 0
     for pair in pairs:
-        print(f"Jaccard index for {pair[0]} & {pair[1]} is: ", get_jaccard_index(file_kmers_dict[pair[0]][0], file_kmers_dict[pair[1]][0]))
-        if minhash:
-            print(f"Jaccard index for {pair[0]} & {pair[1]} after minhash  is: ", get_jaccard_index(file_kmers_dict[pair[0]][2], file_kmers_dict[pair[1]][2]))
+        jacc_index_dir = get_jaccard_index(file_kmers_dict[pair[0]][0], file_kmers_dict[pair[1]][0])
+        print(f"Jaccard index for {pair[0]} & {pair[1]} is: {jacc_index_dir}\n\n")
+        full_dist_df.at[pair[0], pair[1]] = 1-jacc_index_dir
+        full_dist_df.at[pair[1], pair[0]] = 1-jacc_index_dir
+    print(f"\n{full_dist_df.head(len(full_dist_df))}\n")
+    if minhash:
+        hash_dist_df = pd.DataFrame(index=sample_list, columns=sample_list)
+        for i in sample_list:
+            hash_dist_df.at[i, i] = 0
+        for pair in pairs:
+            jacc_index_withhash_dir = get_jaccard_index(file_kmers_dict[pair[0]][2], file_kmers_dict[pair[1]][2])
+            print(f"Jaccard index for {pair[0]} & {pair[1]} after minhash  is: {jacc_index_withhash_dir}\n\n")
+            hash_dist_df.at[pair[0], pair[1]] = 1-jacc_index_withhash_dir
+            hash_dist_df.at[pair[1], pair[0]] = 1-jacc_index_withhash_dir
+        print(f"\n{hash_dist_df.head(len(hash_dist_df))}\n")
 
+if make_tree:
+    counter = 0
+    fasta_exts = (".fa", ".fasta", ".faa", ".fna")
+    if fasta_dir:
+        for fasta_file in os.listdir(fasta_dir):
+            if fasta_file.endswith(fasta_exts):
+                counter += 1
+    if counter < 2:
+        raise Exception("Only two fasta files in the given folder, not making NJ tree...")
+    else:
+        print("Constructing a neighbour-joining tree with full distances...\n\n")
+        full_dist_arr = full_dist_df.to_numpy()
+        ids = sample_list
+        dm = DistanceMatrix(full_dist_arr, ids)
+        full_dist_tree = nj(dm, disallow_negative_branch_length=True)
+        print(f"\n\n{full_dist_tree.ascii_art()}\n")
+        if minhash:
+            print("Constructing a neighbour-joining tree with minhash distances...\n\n")
+            hash_dist_arr = hash_dist_df.to_numpy()
+            hash_dm = DistanceMatrix(hash_dist_arr, ids)
+            hash_dist_tree = nj(hash_dm, disallow_negative_branch_length=True)
+            print(f"\n\n{hash_dist_tree.ascii_art()}\n")
